@@ -5,3 +5,5 @@ accelerate
 peft
 evaluate
 jiwer
+librosa
+soundfile

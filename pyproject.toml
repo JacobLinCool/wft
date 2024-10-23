@@ -18,6 +18,8 @@ dependencies = [
     "peft",
     "evaluate",
     "jiwer",
+    "librosa",
+    "soundfile",
 ]
 
 [project.urls]
