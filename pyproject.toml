@@ -4,7 +4,7 @@ version = "0.0.2"
 authors = [{ name = "Jacob Lin", email = "jacob@csie.cool" }]
 description = "Run Whisper fine-tuning with ease."
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: MIT License",
