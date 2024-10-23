@@ -292,9 +292,6 @@ class WhisperFineTuner:
         def compute_metrics(pred):
             pred_ids = pred.predictions
             label_ids = pred.label_ids
-            pred_ids = pred_ids[0].argmax(
-                axis=-1
-            )  # we got a tuple of logits and past_key_values here
 
             # replace -100 with the pad_token_id
             label_ids[label_ids == -100] = tokenizer.pad_token_id
@@ -309,6 +306,11 @@ class WhisperFineTuner:
 
             return {metric.name: wer_or_cer}
 
+        def preprocess_logits_for_metrics(logits, labels):
+            # we got a tuple of logits and past_key_values here
+            logits = logits[0].argmax(axis=-1)
+            return logits
+
         training_args.metric_for_best_model = self.metric.name
         training_args.greater_is_better = False
 
@@ -320,6 +322,9 @@ class WhisperFineTuner:
             tokenizer=self.feature_extractor,
             data_collator=data_collator,
             compute_metrics=compute_metrics if self.metric is not None else None,
+            preprocess_logits_for_metrics=(
+                preprocess_logits_for_metrics if self.metric is not None else None
+            ),
         )
         self.peft_model.config.use_cache = False
 
