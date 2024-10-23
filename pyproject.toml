@@ -1,0 +1,34 @@
+[project]
+name = "wft"
+version = "0.0.2"
+authors = [{ name = "Jacob Lin", email = "jacob@csie.cool" }]
+description = "Run Whisper fine-tuning with ease."
+readme = "README.md"
+requires-python = ">=3.10"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "torch>=2.0.0",
+    "transformers>=4.0.0",
+    "datasets>=3.0.0",
+    "accelerate",
+    "peft",
+    "evaluate",
+]
+
+[project.urls]
+Homepage = "https://github.com/jacoblincool/wft"
+Issues = "https://github.com/jacoblincool/wft/issues"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.sdist]
+include = ["wft/**/*", "pyproject.toml", "README.md", "LICENSE"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["wft"]
