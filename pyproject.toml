@@ -20,6 +20,7 @@ dependencies = [
     "jiwer",
     "librosa",
     "soundfile",
+    "tensorboard",
 ]
 
 [project.urls]
