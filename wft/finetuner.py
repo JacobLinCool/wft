@@ -104,6 +104,8 @@ class WhisperFineTuner:
         src_audio_column: str = "audio",
         src_transcription_column: str = "transcription",
         src_subset: str | None = None,
+        src_train_split: str = "train+validation",
+        src_test_split: str = "test",
         num_proc: int = 4,
     ):
         """
@@ -128,6 +130,8 @@ class WhisperFineTuner:
             src_audio_column=src_audio_column,
             src_transcription_column=src_transcription_column,
             src_subset=src_subset,
+            src_train_split=src_train_split,
+            src_test_split=src_test_split,
             num_proc=num_proc,
         )
         return self
@@ -188,6 +192,8 @@ class WhisperFineTuner:
         src_audio_column: str = "audio",
         src_transcription_column: str = "transcription",
         src_subset: str | None = None,
+        src_train_split: str = "train+validation",
+        src_test_split: str = "test",
         num_proc: int = 4,
     ):
         """
@@ -212,6 +218,8 @@ class WhisperFineTuner:
                 src_audio_column=src_audio_column,
                 src_transcription_column=src_transcription_column,
                 src_subset=src_subset,
+                src_train_split=src_train_split,
+                src_test_split=src_test_split,
                 num_proc=num_proc,
             )
             self.push_dataset(preprocessed_dataset_name)

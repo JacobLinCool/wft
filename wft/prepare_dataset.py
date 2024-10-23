@@ -9,36 +9,25 @@ def prepare_dataset(
     src_audio_column: str = "audio",
     src_transcription_column: str = "transcription",
     src_subset: str | None = None,
+    src_train_split: str = "train+validation",
+    src_test_split: str = "test",
     num_proc: int = 4,
 ) -> DatasetDict:
     ds = DatasetDict()
 
-    ds["train"] = (
-        load_dataset(
-            src_name,
-            split="train+validation",
-            trust_remote_code=True,
-            num_proc=num_proc,
-        )
-        if src_subset is None
-        else load_dataset(
-            src_name,
-            src_subset,
-            split="train+validation",
-            trust_remote_code=True,
-            num_proc=num_proc,
-        )
+    ds["train"] = load_dataset(
+        src_name,
+        src_subset,
+        split=src_train_split,
+        trust_remote_code=True,
+        num_proc=num_proc,
     )
-    ds["test"] = (
-        load_dataset(src_name, split="test", trust_remote_code=True, num_proc=num_proc)
-        if src_subset is None
-        else load_dataset(
-            src_name,
-            src_subset,
-            split="test",
-            trust_remote_code=True,
-            num_proc=num_proc,
-        )
+    ds["test"] = load_dataset(
+        src_name,
+        src_subset,
+        split=src_test_split,
+        trust_remote_code=True,
+        num_proc=num_proc,
     )
     print("loaded source dataset", ds)
 
