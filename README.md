@@ -42,12 +42,12 @@ ft = (
 
 ## Usage
 
-### 1. Prepare Dataset
+### 1. Set Baseline Model and Prepare Dataset
 
 You can prepare a dataset from a local source or use a pre-existing Hugging Face dataset:
 
 ```python
-ft = WhisperFineTuner(outdir)
+ft = WhisperFineTuner(outdir).set_baseline("openai/whisper-large-v3-turbo", language="zh", task="transcribe")
 ft.prepare_dataset(
     "mozilla-foundation/common_voice_16_1",
     src_subset="zh-TW",
@@ -56,15 +56,7 @@ ft.prepare_dataset(
 )
 ```
 
-### 2. Set Baseline Model
-
-Choose a Whisper model as your baseline:
-
-```python
-ft.set_baseline("openai/whisper-large-v3-turbo", language="zh", task="transcribe")
-```
-
-### 3. Configure Fine-tuning
+### 2. Configure Fine-tuning
 
 Set the evaluation metric and LoRA configuration:
 
@@ -73,7 +65,7 @@ ft.set_metric("cer")
 ft.set_lora_config()  # Use default LoRA config
 ```
 
-### 4. Train the Model
+### 3. Train the Model
 
 Start the fine-tuning process:
 
@@ -81,12 +73,15 @@ Start the fine-tuning process:
 ft.train()  # Use default training arguments
 ```
 
-### 5. Save the Fine-tuned Model
+### 4. Save the Fine-tuned Model
 
 Merge the LoRA weights with the base model and save:
 
 ```python
 ft.merge_and_save(f"{outdir}/merged_model")
+
+# or push to Hugging Face
+ft.merge_and_push("username/merged_model")
 ```
 
 ## Advanced Usage
