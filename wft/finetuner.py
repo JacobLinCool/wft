@@ -10,6 +10,7 @@ from transformers import (
     Seq2SeqTrainingArguments,
     Seq2SeqTrainer,
 )
+from accelerate.utils.imports import is_bf16_available, is_cuda_available
 from peft import LoraConfig, PeftMixedModel, get_peft_model
 import evaluate
 from evaluate import EvaluationModule
@@ -43,6 +44,9 @@ class WhisperFineTuner:
             bias="none",
         )
 
+        use_bf16 = is_bf16_available()
+        use_fp16 = is_cuda_available() if not use_bf16 else False
+
         self.default_training_args = Seq2SeqTrainingArguments(
             output_dir=self.dir,
             per_device_train_batch_size=4,
@@ -55,10 +59,12 @@ class WhisperFineTuner:
             warmup_steps=0,
             eval_strategy="epoch",
             eval_on_start=True,
+            eval_accumulation_steps=32,
             save_strategy="epoch",
             save_total_limit=3,
             load_best_model_at_end=True,
-            fp16=True,
+            bf16=use_bf16,
+            fp16=use_fp16,
             remove_unused_columns=False,
             label_names=["labels"],
             report_to="tensorboard",
@@ -243,6 +249,7 @@ class WhisperFineTuner:
         if lora_config is None:
             lora_config = self.default_lora_config
         self.peft_model = get_peft_model(self.baseline_model, lora_config)
+        self.peft_model.print_trainable_parameters()
         return self
 
     def set_metric(self, metric_type: Literal["cer", "wer"] = "wer"):
@@ -342,7 +349,7 @@ class WhisperFineTuner:
         self.processor.save_pretrained(outdir)
         return self
 
-    def merge_and_upload(self, dest_name: str):
+    def merge_and_push(self, dest_name: str):
         """
         Merge the LoRA weights with the base model and upload it to the Hugging Face Hub.
 
