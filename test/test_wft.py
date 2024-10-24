@@ -18,10 +18,11 @@ def test_whisper_finetuner():
     os.makedirs(test_dir, exist_ok=True)
 
     try:
+        ft = WhisperFineTuner(test_dir)
+        ft.default_training_args.num_train_epochs = 3
         # Initialize WhisperFineTuner
         ft = (
-            WhisperFineTuner(test_dir)
-            .set_baseline("openai/whisper-tiny", language="en", task="transcribe")
+            ft.set_baseline("openai/whisper-tiny", language="en", task="transcribe")
             .prepare_dataset(
                 "hf-internal-testing/librispeech_asr_dummy",
                 src_transcription_column="text",

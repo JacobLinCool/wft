@@ -33,7 +33,8 @@ class WhisperFineTuner:
         self.baseline_model: WhisperForConditionalGeneration | None = None
         self.lora_config: LoraConfig | None = None
         self.peft_model: PeftMixedModel | None = None
-        self.metric: EvaluationModule | None = None
+        self.metric_primary: EvaluationModule | None = None
+        self.metric_secondary: EvaluationModule | None = None
 
         self.default_lora_config = LoraConfig(
             r=32,
@@ -262,7 +263,8 @@ class WhisperFineTuner:
         Returns:
             self: The WhisperFineTuner instance.
         """
-        self.metric = evaluate.load(metric_type)
+        self.metric_primary = evaluate.load(metric_type)
+        self.metric_secondary = evaluate.load("cer" if metric_type == "wer" else "wer")
         return self
 
     def train(self, training_args: Seq2SeqTrainingArguments | None = None):
@@ -287,7 +289,8 @@ class WhisperFineTuner:
 
         data_collator = DataCollatorSpeechSeq2SeqWithPadding(self.processor)
         tokenizer = self.tokenizer
-        metric = self.metric
+        metric_primary = self.metric_primary
+        metric_secondary = self.metric_secondary
 
         def compute_metrics(pred):
             pred_ids = pred.predictions
@@ -300,18 +303,24 @@ class WhisperFineTuner:
             pred_str = tokenizer.batch_decode(pred_ids, skip_special_tokens=True)
             label_str = tokenizer.batch_decode(label_ids, skip_special_tokens=True)
 
-            wer_or_cer = 100 * metric.compute(
+            metric_primary_result = 100 * metric_primary.compute(
+                predictions=pred_str, references=label_str
+            )
+            metric_secondary_result = 100 * metric_secondary.compute(
                 predictions=pred_str, references=label_str
             )
 
-            return {metric.name: wer_or_cer}
+            return {
+                metric_primary.name: metric_primary_result,
+                metric_secondary.name: metric_secondary_result,
+            }
 
         def preprocess_logits_for_metrics(logits, labels):
             # we got a tuple of logits and past_key_values here
             logits = logits[0].argmax(axis=-1)
             return logits
 
-        training_args.metric_for_best_model = self.metric.name
+        training_args.metric_for_best_model = self.metric_primary.name
         training_args.greater_is_better = False
 
         self.trainer = trainer = Seq2SeqTrainer(
@@ -321,10 +330,8 @@ class WhisperFineTuner:
             eval_dataset=self.dataset["test"],
             tokenizer=self.feature_extractor,
             data_collator=data_collator,
-            compute_metrics=compute_metrics if self.metric is not None else None,
-            preprocess_logits_for_metrics=(
-                preprocess_logits_for_metrics if self.metric is not None else None
-            ),
+            compute_metrics=compute_metrics,
+            preprocess_logits_for_metrics=preprocess_logits_for_metrics,
         )
         self.peft_model.config.use_cache = False
 
