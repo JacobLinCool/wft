@@ -12,13 +12,14 @@ def filter4(ft: WhisperFineTuner):
 
 def test_whisper_finetuner():
     # Set up test directory
-    id = "test-model"
+    id = "wft-test-model"
+    org = "JacobLinCool"
     merged_model_path = os.path.join(id, "merged_model")
     shutil.rmtree(id, ignore_errors=True)
     os.makedirs(id, exist_ok=True)
 
     try:
-        ft = WhisperFineTuner(id)
+        ft = WhisperFineTuner(id, org)
         ft.training_args.num_train_epochs = 3
         # Initialize WhisperFineTuner
         ft = (

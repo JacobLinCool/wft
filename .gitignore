@@ -164,4 +164,5 @@ cython_debug/
 *.egg-info
 
 .DS_Store
-test_output/
+test-model/
+exp/

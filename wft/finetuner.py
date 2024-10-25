@@ -1,3 +1,4 @@
+import torch
 from .prepare_dataset import prepare_dataset
 from .utils import DataCollatorSpeechSeq2SeqWithPadding
 from typing import Any, Literal, Callable
@@ -17,26 +18,28 @@ from evaluate import EvaluationModule
 
 
 class WhisperFineTuner:
-    def __init__(self, dir: str):
+    def __init__(self, id: str, org: str | None = None):
         """
         Initialize the WhisperFineTuner.
 
         Args:
-            dir (str): The directory to save output files.
+            id (str): The unique identifier for the LoRA model, use alphanumeric characters, numbers, and dashes only. (e.g., "whisper-large-v3-turbo-zh-TW-test-1")
+            org (str | None): The HuggingFace organization name, if present, the model will be uploaded to the Hub. (default: None)
         """
-        self.dir = dir
+        self.id = id
+        self.org = org
+        self.dir = f"./exp/{id}"
         self.baseline: str | None = None
         self.feature_extractor: WhisperFeatureExtractor | None = None
         self.tokenizer: WhisperTokenizer | None = None
         self.processor: WhisperProcessor | None = None
         self.dataset: DatasetDict
         self.baseline_model: WhisperForConditionalGeneration | None = None
-        self.lora_config: LoraConfig | None = None
         self.peft_model: PeftMixedModel | None = None
         self.metric_primary: EvaluationModule | None = None
         self.metric_secondary: EvaluationModule | None = None
 
-        self.default_lora_config = LoraConfig(
+        self.lora_config = LoraConfig(
             r=32,
             lora_alpha=8,
             use_rslora=True,
@@ -45,33 +48,36 @@ class WhisperFineTuner:
             bias="none",
         )
 
-        use_bf16 = is_bf16_available()
-        use_fp16 = is_cuda_available() if not use_bf16 else False
+        self.use_bf16 = is_bf16_available()
+        self.use_fp16 = is_cuda_available() if not self.use_bf16 else False
 
-        self.default_training_args = Seq2SeqTrainingArguments(
+        self.training_args = Seq2SeqTrainingArguments(
             output_dir=self.dir,
             per_device_train_batch_size=4,
             per_device_eval_batch_size=4,
             auto_find_batch_size=True,
+            gradient_checkpointing=True,
+            gradient_checkpointing_kwargs={"use_reentrant": False},
             generation_max_length=128,
             gradient_accumulation_steps=1,
             learning_rate=5e-4,
             num_train_epochs=5,
             warmup_steps=0,
             eval_strategy="epoch",
-            eval_on_start=True,
+            eval_on_start=False,  # It may run multiple times if auto_find_batch_size is changing the batch size
             eval_accumulation_steps=32,
             save_strategy="epoch",
             save_total_limit=3,
             load_best_model_at_end=True,
-            bf16=use_bf16,
-            fp16=use_fp16,
+            bf16=self.use_bf16,
+            fp16=self.use_fp16,
             remove_unused_columns=False,
             label_names=["labels"],
-            report_to="tensorboard",
+            report_to=["tensorboard"],
             logging_steps=1,
+            push_to_hub=True if org is not None else False,
+            hub_model_id=f"{org}/{id}" if org is not None else None,
         )
-        pass
 
     def set_baseline(
         self,
@@ -98,8 +104,13 @@ class WhisperFineTuner:
         self.processor = WhisperProcessor.from_pretrained(
             baseline, language=language, task=task
         )
+        dtype = (
+            torch.bfloat16
+            if self.use_bf16
+            else torch.float16 if self.use_fp16 else torch.float32
+        )
         self.baseline_model = WhisperForConditionalGeneration.from_pretrained(
-            baseline, load_in_8bit=False
+            baseline, load_in_8bit=False, torch_dtype=dtype
         )
         self.baseline_model.config.forced_decoder_ids = None
         self.baseline_model.config.suppress_tokens = []
@@ -234,23 +245,18 @@ class WhisperFineTuner:
 
     def set_lora_config(
         self,
-        lora_config: LoraConfig | None = None,
+        lora_config: LoraConfig,
     ):
         """
         Set the LoRA configuration for fine-tuning.
 
         Args:
-            lora_config (LoraConfig | None): The LoRA configuration to use. If None, uses the default configuration.
+            lora_config (LoraConfig): The LoRA configuration to use.
 
         Returns:
             self: The WhisperFineTuner instance.
         """
-        if self.baseline_model is None:
-            raise ValueError("Please set the baseline first.")
-        if lora_config is None:
-            lora_config = self.default_lora_config
-        self.peft_model = get_peft_model(self.baseline_model, lora_config)
-        self.peft_model.print_trainable_parameters()
+        self.lora_config = lora_config
         return self
 
     def set_metric(self, metric_type: Literal["cer", "wer"] = "wer"):
@@ -267,6 +273,19 @@ class WhisperFineTuner:
         self.metric_secondary = evaluate.load("cer" if metric_type == "wer" else "wer")
         return self
 
+    def set_training_args(self, training_args: Seq2SeqTrainingArguments):
+        """
+        Set the training arguments for the model.
+
+        Args:
+            training_args (Seq2SeqTrainingArguments): The training arguments to use.
+
+        Returns:
+            self: The WhisperFineTuner instance.
+        """
+        self.training_args = training_args
+        return self
+
     def train(self, training_args: Seq2SeqTrainingArguments | None = None):
         """
         Train the model using the prepared dataset and configurations.
@@ -281,11 +300,15 @@ class WhisperFineTuner:
             raise ValueError("Please prepare or load the dataset first.")
         if self.feature_extractor is None or self.tokenizer is None:
             raise ValueError("Please set the baseline first.")
-        if self.peft_model is None:
-            raise ValueError("Please set the lora config first.")
+        if self.baseline_model is None:
+            raise ValueError("Please set the baseline first.")
 
-        if training_args is None:
-            training_args = self.default_training_args
+        self.peft_model = get_peft_model(self.baseline_model, self.lora_config)
+        self.peft_model.print_trainable_parameters()
+
+        if training_args is not None:
+            self.training_args = training_args
+        print(f"Training arguments: {self.training_args}")
 
         data_collator = DataCollatorSpeechSeq2SeqWithPadding(self.processor)
         tokenizer = self.tokenizer
@@ -320,12 +343,12 @@ class WhisperFineTuner:
             logits = logits[0].argmax(axis=-1)
             return logits
 
-        training_args.metric_for_best_model = self.metric_primary.name
-        training_args.greater_is_better = False
+        self.training_args.metric_for_best_model = self.metric_primary.name
+        self.training_args.greater_is_better = False
 
         self.trainer = trainer = Seq2SeqTrainer(
             model=self.peft_model,
-            args=training_args,
+            args=self.training_args,
             train_dataset=self.dataset["train"],
             eval_dataset=self.dataset["test"],
             tokenizer=self.feature_extractor,
@@ -338,41 +361,59 @@ class WhisperFineTuner:
         trainer.train()
         return self
 
-    def merge(self) -> WhisperForConditionalGeneration:
+    def merge(
+        self, dtype: torch.dtype | None = None
+    ) -> WhisperForConditionalGeneration:
         """
         Merge the LoRA weights with the base model.
+
+        Args:
+            dtype (torch.dtype | None): The data type to use for the merged model (default: None).
 
         Returns:
             WhisperForConditionalGeneration: The merged model.
         """
-        return self.peft_model.merge_and_unload()
+        model = self.peft_model.merge_and_unload()
+        if dtype is None:
+            dtype = (
+                torch.bfloat16
+                if self.use_bf16
+                else torch.float16 if self.use_fp16 else torch.float32
+            )
+        return model.to(dtype=dtype)
 
-    def merge_and_save(self, outdir: str):
+    def merge_and_save(self, outdir: str, dtype: torch.dtype | None = None):
         """
         Merge the LoRA weights with the base model and save it to a directory.
 
         Args:
             outdir (str): The output directory to save the merged model.
+            dtype (torch.dtype | None): The data type to use for the merged model (default: None).
 
         Returns:
             self: The WhisperFineTuner instance.
         """
-        self.merge().save_pretrained(outdir)
+        model = self.merge(dtype)
+        model.save_pretrained(outdir)
         self.processor.save_pretrained(outdir)
+        self.tokenizer.save_pretrained(outdir)
         return self
 
-    def merge_and_push(self, dest_name: str):
+    def merge_and_push(self, dest_name: str, dtype: torch.dtype | None = None):
         """
         Merge the LoRA weights with the base model and upload it to the Hugging Face Hub.
 
         Args:
             dest_name (str): The destination name for the model on the Hub.
+            dtype (torch.dtype | None): The data type to use for the merged model (default: None).
 
         Returns:
             self: The WhisperFineTuner instance.
         """
-        self.merge().push_to_hub(dest_name)
+        model = self.merge(dtype)
+        model.push_to_hub(dest_name)
         self.processor.push_to_hub(dest_name)
+        self.tokenizer.push_to_hub(dest_name)
         return self
 
     def then(self, func: Callable[["WhisperFineTuner"], Any]):
