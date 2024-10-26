@@ -1,6 +1,5 @@
+import os
 import torch
-from .prepare_dataset import prepare_dataset
-from .utils import DataCollatorSpeechSeq2SeqWithPadding
 from typing import Any, Literal, Callable
 from datasets import DatasetDict, load_dataset
 from transformers import (
@@ -11,12 +10,16 @@ from transformers import (
     Seq2SeqTrainingArguments,
     Seq2SeqTrainer,
 )
+from transformers.trainer_utils import get_last_checkpoint
 from transformers.integrations import TensorBoardCallback
 from transformers.trainer_callback import ProgressCallback
 from accelerate.utils.imports import is_bf16_available, is_cuda_available
-from peft import LoraConfig, PeftMixedModel, get_peft_model, TaskType
+from peft import LoraConfig, PeftMixedModel, get_peft_model
 import evaluate
 from evaluate import EvaluationModule
+from huggingface_hub import HfApi
+from .prepare_dataset import prepare_dataset
+from .utils import DataCollatorSpeechSeq2SeqWithPadding
 from .callbacks import WFTTensorBoardCallback, WFTProgressCallback
 
 
@@ -81,7 +84,7 @@ class WhisperFineTuner:
             logging_steps=1,
             push_to_hub=True if org is not None else False,
             hub_model_id=f"{org}/{id}" if org is not None else None,
-            hub_strategy="all_checkpoints",
+            hub_strategy="checkpoint",
         )
 
     def set_baseline(
@@ -295,12 +298,17 @@ class WhisperFineTuner:
         self.training_args = training_args
         return self
 
-    def train(self, training_args: Seq2SeqTrainingArguments | None = None):
+    def train(
+        self,
+        training_args: Seq2SeqTrainingArguments | None = None,
+        resume: bool = False,
+    ):
         """
         Train the model using the prepared dataset and configurations.
 
         Args:
             training_args (Seq2SeqTrainingArguments | None): The training arguments to use. If None, uses default arguments.
+            resume (bool): Whether to resume training from the last checkpoint (default: False).
 
         Returns:
             self: The WhisperFineTuner instance.
@@ -311,9 +319,6 @@ class WhisperFineTuner:
             raise ValueError("Please set the baseline first.")
         if self.baseline_model is None:
             raise ValueError("Please set the baseline first.")
-
-        self.peft_model = get_peft_model(self.baseline_model, self.lora_config)
-        self.peft_model.print_trainable_parameters()
 
         if training_args is not None:
             self.training_args = training_args
@@ -360,6 +365,21 @@ class WhisperFineTuner:
         self.training_args.metric_for_best_model = self.metric_primary.name
         self.training_args.greater_is_better = False
 
+        if resume:
+            try:
+                if self.org is not None and not os.path.exists(self.dir):
+                    hf = HfApi()
+                    hf.snapshot_download(
+                        self.training_args.hub_model_id, local_dir=self.dir
+                    )
+                if get_last_checkpoint(self.dir) is None:
+                    raise Exception("No checkpoint found.")
+            except Exception as e:
+                print(f"Failed to resume training: {e}, starting from scratch.")
+                resume = False
+        self.peft_model = get_peft_model(self.baseline_model, self.lora_config)
+        self.peft_model.print_trainable_parameters()
+
         self.trainer = trainer = Seq2SeqTrainer(
             model=self.peft_model,
             args=self.training_args,
@@ -384,25 +404,33 @@ class WhisperFineTuner:
         ):
             trainer.add_callback(WFTTensorBoardCallback())
 
-        trainer.train()
+        trainer.train(resume_from_checkpoint=resume)
         trainer.save_model(_internal_call=True)
 
-        # temporarily remove large preds
-        preds = []
-        for log in trainer.state.log_history:
-            preds.append(log.pop("eval_pred", None))
+        if self.org is not None:
+            # temporarily remove large preds
+            preds = []
+            for log in trainer.state.log_history:
+                preds.append(log.pop("eval_pred", None))
 
-        trainer.push_to_hub(
-            language=self.tokenizer.language,
-            finetuned_from=self.baseline,
-            tasks="automatic-speech-recognition",
-            dataset_tags=self.original_dataset,
-            tags=["wft", "whisper", "automatic-speech-recognition", "audio", "speech"],
-        )
+            trainer.push_to_hub(
+                language=self.tokenizer.language,
+                finetuned_from=self.baseline,
+                tasks="automatic-speech-recognition",
+                dataset_tags=self.original_dataset,
+                tags=[
+                    "wft",
+                    "whisper",
+                    "automatic-speech-recognition",
+                    "audio",
+                    "speech",
+                ],
+            )
 
-        # restore preds
-        for log, pred in zip(trainer.state.log_history, preds):
-            log["eval_pred"] = pred
+            # restore preds
+            for log, pred in zip(trainer.state.log_history, preds):
+                log["eval_pred"] = pred
+
         return self
 
     def merge(
@@ -445,21 +473,39 @@ class WhisperFineTuner:
         self.tokenizer.save_pretrained(outdir)
         return self
 
-    def merge_and_push(self, dest_name: str, dtype: torch.dtype | None = None):
+    def merge_and_push(
+        self, dest_name: str | None = None, dtype: torch.dtype | None = None
+    ):
         """
         Merge the LoRA weights with the base model and upload it to the Hugging Face Hub.
 
         Args:
-            dest_name (str): The destination name for the model on the Hub.
+            dest_name (str | None): The destination name for the model on the Hub. If None, uses the original model ID + "-merged".
             dtype (torch.dtype | None): The data type to use for the merged model (default: None).
 
         Returns:
             self: The WhisperFineTuner instance.
         """
+        if dest_name is None:
+            if self.training_args.hub_model_id is None:
+                raise ValueError("Please set the model name to push the model.")
+            dest_name = f"{self.training_args.hub_model_id}-merged"
+
         model = self.merge(dtype)
         model.push_to_hub(dest_name)
         self.processor.push_to_hub(dest_name)
         self.tokenizer.push_to_hub(dest_name)
+
+        with open(os.path.join(self.dir, "README.md"), "r") as f:
+            content = f.read()
+        content = content.replace("library_name: peft", "library_name: transformers")
+
+        hf = HfApi()
+        hf.upload_file(
+            repo_id=dest_name,
+            path_in_repo="README.md",
+            path_or_fileobj=bytes(content, "utf-8"),
+        )
         return self
 
     def then(self, func: Callable[["WhisperFineTuner"], Any]):

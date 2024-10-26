@@ -12,7 +12,6 @@ def test_whisper_finetuner():
         ft.training_args.num_train_epochs = 5
 
         shutil.rmtree(ft.dir, ignore_errors=True)
-        merged_model_path = os.path.join(ft.dir, "merged_model")
 
         ft = (
             ft.set_baseline("openai/whisper-tiny", language="en", task="transcribe")
@@ -24,16 +23,8 @@ def test_whisper_finetuner():
             )
             .set_metric("wer")
             .train()
-            .merge_and_save(merged_model_path)
+            .merge_and_push()
         )
-
-        # Check if the merged model files exist
-        assert os.path.exists(
-            os.path.join(merged_model_path, "model.safetensors")
-        ), "Merged model file not found"
-        assert os.path.exists(
-            os.path.join(merged_model_path, "config.json")
-        ), "Model config file not found"
 
         print("WhisperFineTuner test completed successfully!")
 
