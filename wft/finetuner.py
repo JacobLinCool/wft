@@ -11,10 +11,13 @@ from transformers import (
     Seq2SeqTrainingArguments,
     Seq2SeqTrainer,
 )
+from transformers.integrations import TensorBoardCallback
+from transformers.trainer_callback import ProgressCallback
 from accelerate.utils.imports import is_bf16_available, is_cuda_available
-from peft import LoraConfig, PeftMixedModel, get_peft_model
+from peft import LoraConfig, PeftMixedModel, get_peft_model, TaskType
 import evaluate
 from evaluate import EvaluationModule
+from .callbacks import WFTTensorBoardCallback, WFTProgressCallback
 
 
 class WhisperFineTuner:
@@ -33,7 +36,8 @@ class WhisperFineTuner:
         self.feature_extractor: WhisperFeatureExtractor | None = None
         self.tokenizer: WhisperTokenizer | None = None
         self.processor: WhisperProcessor | None = None
-        self.dataset: DatasetDict
+        self.dataset: DatasetDict | None = None
+        self.original_dataset: str | None = None
         self.baseline_model: WhisperForConditionalGeneration | None = None
         self.peft_model: PeftMixedModel | None = None
         self.metric_primary: EvaluationModule | None = None
@@ -77,6 +81,7 @@ class WhisperFineTuner:
             logging_steps=1,
             push_to_hub=True if org is not None else False,
             hub_model_id=f"{org}/{id}" if org is not None else None,
+            hub_strategy="all_checkpoints",
         )
 
     def set_baseline(
@@ -107,7 +112,9 @@ class WhisperFineTuner:
         dtype = (
             torch.bfloat16
             if self.use_bf16
-            else torch.float16 if self.use_fp16 else torch.float32
+            else torch.float16
+            if self.use_fp16
+            else torch.float32
         )
         self.baseline_model = WhisperForConditionalGeneration.from_pretrained(
             baseline, load_in_8bit=False, torch_dtype=dtype
@@ -152,6 +159,7 @@ class WhisperFineTuner:
             src_test_split=src_test_split,
             num_proc=num_proc,
         )
+        self.original_dataset = src_name
         return self
 
     def push_dataset(self, dest_name: str):
@@ -201,6 +209,7 @@ class WhisperFineTuner:
             )
 
         self.dataset = ds.with_format("torch")
+        self.original_dataset = dest_name
         return self
 
     def load_or_prepare_dataset(
@@ -333,9 +342,14 @@ class WhisperFineTuner:
                 predictions=pred_str, references=label_str
             )
 
+            markdown_table = "| i | Label | Prediction |\n| --- | --- | --- |\n"
+            for i, (label, pred) in enumerate(zip(label_str, pred_str)):
+                markdown_table += f"| {i} | {label} | {pred} |\n"
+
             return {
                 metric_primary.name: metric_primary_result,
                 metric_secondary.name: metric_secondary_result,
+                "pred": markdown_table,
             }
 
         def preprocess_logits_for_metrics(logits, labels):
@@ -358,7 +372,37 @@ class WhisperFineTuner:
         )
         self.peft_model.config.use_cache = False
 
+        trainer.remove_callback(TensorBoardCallback)
+        trainer.remove_callback(ProgressCallback)
+        trainer.add_callback(WFTProgressCallback())
+        if (
+            isinstance(self.training_args.report_to, list)
+            and "tensorboard" in self.training_args.report_to
+        ) or (
+            isinstance(self.training_args.report_to, str)
+            and self.training_args.report_to == "tensorboard"
+        ):
+            trainer.add_callback(WFTTensorBoardCallback())
+
         trainer.train()
+        trainer.save_model(_internal_call=True)
+
+        # temporarily remove large preds
+        preds = []
+        for log in trainer.state.log_history:
+            preds.append(log.pop("eval_pred", None))
+
+        trainer.push_to_hub(
+            language=self.tokenizer.language,
+            finetuned_from=self.baseline,
+            tasks="automatic-speech-recognition",
+            dataset_tags=self.original_dataset,
+            tags=["wft", "whisper", "automatic-speech-recognition", "audio", "speech"],
+        )
+
+        # restore preds
+        for log, pred in zip(trainer.state.log_history, preds):
+            log["eval_pred"] = pred
         return self
 
     def merge(
@@ -378,7 +422,9 @@ class WhisperFineTuner:
             dtype = (
                 torch.bfloat16
                 if self.use_bf16
-                else torch.float16 if self.use_fp16 else torch.float32
+                else torch.float16
+                if self.use_fp16
+                else torch.float32
             )
         return model.to(dtype=dtype)
 

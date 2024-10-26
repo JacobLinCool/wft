@@ -165,4 +165,5 @@ cython_debug/
 
 .DS_Store
 test-model/
+wft-test-model/
 exp/

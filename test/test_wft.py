@@ -13,14 +13,14 @@ def filter4(ft: WhisperFineTuner):
 def test_whisper_finetuner():
     # Set up test directory
     id = "test-model"
-    merged_model_path = os.path.join(id, "merged_model")
-    shutil.rmtree(id, ignore_errors=True)
-    os.makedirs(id, exist_ok=True)
 
     try:
         ft = WhisperFineTuner(id)
         ft.training_args.num_train_epochs = 3
-        # Initialize WhisperFineTuner
+
+        shutil.rmtree(ft.dir, ignore_errors=True)
+        merged_model_path = os.path.join(ft.dir, "merged_model")
+
         ft = (
             ft.set_baseline("openai/whisper-tiny", language="en", task="transcribe")
             .prepare_dataset(
@@ -46,8 +46,6 @@ def test_whisper_finetuner():
         print("WhisperFineTuner test completed successfully!")
 
     finally:
-        # Clean up test directory
-        # shutil.rmtree(id, ignore_errors=True)
         pass
 
 
