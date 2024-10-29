@@ -1,6 +1,6 @@
 [project]
 name = "wft"
-version = "0.0.7"
+version = "0.0.8"
 authors = [{ name = "Jacob Lin", email = "jacob@csie.cool" }]
 description = "Run Whisper fine-tuning with ease."
 readme = "README.md"

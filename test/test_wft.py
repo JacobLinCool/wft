@@ -3,13 +3,6 @@ import shutil
 from wft import WhisperFineTuner
 
 
-def filter4(ft: WhisperFineTuner):
-    # Filter to 4 samples each
-    ft.dataset["train"] = ft.dataset["train"].select(range(4))
-    ft.dataset["test"] = ft.dataset["test"].select(range(4))
-    print(f"Filtered dataset: {ft.dataset}")
-
-
 def test_whisper_finetuner():
     # Set up test directory
     id = "test-model"
@@ -26,10 +19,9 @@ def test_whisper_finetuner():
             .prepare_dataset(
                 "hf-internal-testing/librispeech_asr_dummy",
                 src_transcription_column="text",
-                src_train_split="validation[:10]",
-                src_test_split="validation[10:20]",
+                src_train_split="validation[:4]",
+                src_test_split="validation[4:8]",
             )
-            .then(filter4)
             .set_metric("wer")
             .train()
             .merge_and_save(merged_model_path)

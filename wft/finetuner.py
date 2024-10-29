@@ -61,7 +61,7 @@ class WhisperFineTuner:
         self.training_args = Seq2SeqTrainingArguments(
             output_dir=self.dir,
             per_device_train_batch_size=4,
-            per_device_eval_batch_size=4,
+            per_device_eval_batch_size=8,
             auto_find_batch_size=True,
             gradient_checkpointing=True,
             gradient_checkpointing_kwargs={"use_reentrant": False},
