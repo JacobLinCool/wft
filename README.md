@@ -25,10 +25,11 @@ from wft import WhisperFineTuner
 
 id = "whisper-large-v3-turbo-zh-TW-test-1"
 org = "JacobLinCool" # if you want to push to Hugging Face
+
 ft = (
     WhisperFineTuner(id, org)
     .set_baseline("openai/whisper-large-v3-turbo", language="zh", task="transcribe")
-    .load_or_prepare_dataset(
+    .prepare_dataset(
         "mozilla-foundation/common_voice_16_1",
         src_subset="zh-TW",
         src_audio_column="audio",
@@ -36,6 +37,7 @@ ft = (
     )
     .set_metric("cer")
     .train()  # Use default training arguments
+    .merge_and_push()
 )
 ```
 
@@ -46,7 +48,8 @@ ft = (
 You can prepare a dataset from a local source or use a pre-existing Hugging Face dataset:
 
 ```python
-ft = WhisperFineTuner(id)
+ft = (
+    WhisperFineTuner(id)
     .set_baseline("openai/whisper-large-v3-turbo", language="zh", task="transcribe")
     .prepare_dataset(
         "mozilla-foundation/common_voice_16_1",
@@ -54,6 +57,30 @@ ft = WhisperFineTuner(id)
         src_audio_column="audio",
         src_transcription_column="sentence",
     )
+)
+```
+
+You can upload the preprocessed dataset to Hugging Face:
+
+```python
+# after preparing the dataset
+ft.push_dataset("username/dataset_name")
+```
+
+Or you can prepare or load a dataset if you already have one:
+
+```python
+ft = (
+    WhisperFineTuner(id)
+    .set_baseline("openai/whisper-large-v3-turbo", language="zh", task="transcribe")
+    .prepare_dataset(
+        "username/preprocessed_dataset",
+        "mozilla-foundation/common_voice_16_1",
+        src_subset="zh-TW",
+        src_audio_column="audio",
+        src_transcription_column="sentence",
+    )
+)
 ```
 
 ### 2. Configure Fine-tuning
