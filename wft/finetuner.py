@@ -68,12 +68,14 @@ class WhisperFineTuner:
             generation_max_length=128,
             gradient_accumulation_steps=1,
             learning_rate=5e-4,
-            num_train_epochs=5,
-            warmup_steps=0,
-            eval_strategy="epoch",
+            warmup_steps=50,
+            max_steps=1000,
+            eval_strategy="steps",
+            eval_steps=1000,
             eval_on_start=False,  # It may run multiple times if auto_find_batch_size is changing the batch size
             eval_accumulation_steps=32,
-            save_strategy="epoch",
+            save_strategy="steps",
+            save_steps=1000,
             save_total_limit=3,
             load_best_model_at_end=True,
             bf16=self.use_bf16,
@@ -134,7 +136,6 @@ class WhisperFineTuner:
         src_subset: str | None = None,
         src_train_split: str = "train+validation",
         src_test_split: str = "test",
-        num_proc: int = 4,
     ):
         """
         Prepare the dataset for fine-tuning.
@@ -160,99 +161,8 @@ class WhisperFineTuner:
             src_subset=src_subset,
             src_train_split=src_train_split,
             src_test_split=src_test_split,
-            num_proc=num_proc,
         )
         self.original_dataset = src_name
-        return self
-
-    def push_dataset(self, dest_name: str):
-        """
-        Push the prepared dataset to the Hugging Face Hub.
-
-        Args:
-            dest_name (str): The destination name for the dataset on the Hub.
-
-        Returns:
-            self: The WhisperFineTuner instance.
-        """
-        if self.dataset is None:
-            raise ValueError("Please prepare or load the dataset first.")
-        self.dataset.push_to_hub(dest_name)
-        return self
-
-    def load_dataset(self, dest_name: str):
-        """
-        Load a preprocessed dataset from the Hugging Face Hub.
-
-        Args:
-            dest_name (str): The name of the dataset on the Hub.
-
-        Returns:
-            self: The WhisperFineTuner instance.
-        """
-        ds = load_dataset(dest_name)
-
-        if "train" not in ds or "test" not in ds:
-            raise ValueError("Dataset does not contain both train and test splits.")
-
-        if (
-            "input_features" not in ds.column_names["train"]
-            or "labels" not in ds.column_names["train"]
-        ):
-            raise ValueError(
-                "Dataset (train) does not contain both input_features and labels columns."
-            )
-
-        if (
-            "input_features" not in ds.column_names["test"]
-            or "labels" not in ds.column_names["test"]
-        ):
-            raise ValueError(
-                "Dataset (test) does not contain both input_features and labels columns."
-            )
-
-        self.dataset = ds.with_format("torch")
-        self.original_dataset = dest_name
-        return self
-
-    def load_or_prepare_dataset(
-        self,
-        preprocessed_dataset_name: str,
-        src_name: str,
-        src_audio_column: str = "audio",
-        src_transcription_column: str = "transcription",
-        src_subset: str | None = None,
-        src_train_split: str = "train+validation",
-        src_test_split: str = "test",
-        num_proc: int = 4,
-    ):
-        """
-        Load a preprocessed dataset if available, or prepare and push a new one.
-
-        Args:
-            preprocessed_dataset_name (str): The name of the preprocessed dataset on the Hub.
-            src_name (str): The name or path of the source dataset.
-            src_audio_column (str): The name of the audio column in the source dataset (default: "audio").
-            src_transcription_column (str): The name of the transcription column in the source dataset (default: "transcription").
-            src_subset (str | None): The subset of the dataset to use, if any (default: None).
-            num_proc (int): The number of processes to use for data preparation (default: 4).
-
-        Returns:
-            self: The WhisperFineTuner instance.
-        """
-        try:
-            self.load_dataset(preprocessed_dataset_name)
-        except:
-            self.prepare_dataset(
-                src_name=src_name,
-                src_audio_column=src_audio_column,
-                src_transcription_column=src_transcription_column,
-                src_subset=src_subset,
-                src_train_split=src_train_split,
-                src_test_split=src_test_split,
-                num_proc=num_proc,
-            )
-            self.push_dataset(preprocessed_dataset_name)
         return self
 
     def set_lora_config(
@@ -296,6 +206,23 @@ class WhisperFineTuner:
             self: The WhisperFineTuner instance.
         """
         self.training_args = training_args
+        return self
+
+    def set_steps(self, max_steps: int, eval_steps: int, save_steps: int):
+        """
+        Set the number of steps for training, evaluation, and saving checkpoints.
+
+        Args:
+            max_steps (int): The maximum number of steps for training.
+            eval_steps (int): The number of steps between evaluations.
+            save_steps (int): The number of steps between saving checkpoints.
+
+        Returns:
+            self: The WhisperFineTuner instance.
+        """
+        self.training_args.max_steps = max_steps
+        self.training_args.eval_steps = eval_steps
+        self.training_args.save_steps = save_steps
         return self
 
     def train(

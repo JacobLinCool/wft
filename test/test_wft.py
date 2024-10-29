@@ -9,7 +9,6 @@ def test_whisper_finetuner():
 
     try:
         ft = WhisperFineTuner(id)
-        ft.training_args.num_train_epochs = 3
 
         shutil.rmtree(ft.dir, ignore_errors=True)
         merged_model_path = os.path.join(ft.dir, "merged_model")
@@ -19,10 +18,11 @@ def test_whisper_finetuner():
             .prepare_dataset(
                 "hf-internal-testing/librispeech_asr_dummy",
                 src_transcription_column="text",
-                src_train_split="validation[:4]",
-                src_test_split="validation[4:8]",
+                src_train_split="validation",
+                src_test_split="validation",
             )
             .set_metric("wer")
+            .set_steps(3, 1, 1)
             .train()
             .merge_and_save(merged_model_path)
         )

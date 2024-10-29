@@ -1,5 +1,29 @@
-from datasets import DatasetDict, load_dataset, Audio
+from datasets import IterableDatasetDict, Audio, load_dataset, interleave_datasets
 from transformers import WhisperFeatureExtractor, WhisperTokenizer
+
+
+def load_streaming_dataset(dataset_name, dataset_config_name, split, **kwargs):
+    if "+" in split:
+        # load multiple splits separated by the `+` symbol *with* streaming mode
+        dataset_splits = [
+            load_dataset(
+                dataset_name,
+                dataset_config_name,
+                split=split_name,
+                streaming=True,
+                **kwargs,
+            )
+            for split_name in split.split("+")
+        ]
+        # interleave multiple splits to form one dataset
+        interleaved_dataset = interleave_datasets(dataset_splits)
+        return interleaved_dataset
+    else:
+        # load a single split *with* streaming mode
+        dataset = load_dataset(
+            dataset_name, dataset_config_name, split=split, streaming=True, **kwargs
+        )
+        return dataset
 
 
 def prepare_dataset(
@@ -11,23 +35,20 @@ def prepare_dataset(
     src_subset: str | None = None,
     src_train_split: str = "train+validation",
     src_test_split: str = "test",
-    num_proc: int = 4,
-) -> DatasetDict:
-    ds = DatasetDict()
+) -> IterableDatasetDict:
+    ds = IterableDatasetDict()
 
-    ds["train"] = load_dataset(
+    ds["train"] = load_streaming_dataset(
         src_name,
         src_subset,
         split=src_train_split,
         trust_remote_code=True,
-        num_proc=num_proc,
     )
-    ds["test"] = load_dataset(
+    ds["test"] = load_streaming_dataset(
         src_name,
         src_subset,
         split=src_test_split,
         trust_remote_code=True,
-        num_proc=num_proc,
     )
     print("loaded source dataset", ds)
 
@@ -59,9 +80,12 @@ def prepare_dataset(
         return batch
 
     ds = ds.map(
-        prepare_dataset, remove_columns=ds.column_names["train"], num_proc=num_proc
+        prepare_dataset,
+        remove_columns=list(next(iter(ds.values())).features),
     )
 
     ds = ds.with_format("torch")
+
+    ds["train"] = ds["train"].shuffle(buffer_size=1024, seed=42)
 
     return ds
