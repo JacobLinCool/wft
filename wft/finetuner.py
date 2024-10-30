@@ -1,7 +1,7 @@
 import os
 import torch
 from typing import Any, Literal, Callable
-from datasets import DatasetDict, load_dataset
+from datasets import DatasetDict
 from transformers import (
     WhisperFeatureExtractor,
     WhisperTokenizer,
@@ -20,7 +20,7 @@ from evaluate import EvaluationModule
 from huggingface_hub import HfApi
 from .prepare_dataset import prepare_dataset
 from .utils import DataCollatorSpeechSeq2SeqWithPadding
-from .callbacks import WFTTensorBoardCallback, WFTProgressCallback
+from .callbacks import WFTTensorBoardCallback, WFTProgressCallback, ShuffleCallback
 
 
 class WhisperFineTuner:
@@ -330,6 +330,7 @@ class WhisperFineTuner:
             and self.training_args.report_to == "tensorboard"
         ):
             trainer.add_callback(WFTTensorBoardCallback())
+        trainer.add_callback(ShuffleCallback())
 
         trainer.train(resume_from_checkpoint=resume)
         trainer.save_model(_internal_call=True)

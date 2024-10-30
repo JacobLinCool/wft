@@ -1,6 +1,9 @@
+from transformers import TrainerCallback
 from transformers.integrations import TensorBoardCallback, rewrite_logs
 from transformers.integrations.integration_utils import logger
 from transformers.trainer_callback import ProgressCallback
+from transformers.trainer_pt_utils import IterableDatasetShard
+from torch.utils.data import IterableDataset
 
 
 class WFTTensorBoardCallback(TensorBoardCallback):
@@ -48,3 +51,11 @@ class WFTProgressCallback(ProgressCallback):
             if "epoch" in shallow_logs:
                 shallow_logs["epoch"] = round(shallow_logs["epoch"], 2)
             self.training_bar.write(str(shallow_logs))
+
+
+class ShuffleCallback(TrainerCallback):
+    def on_epoch_begin(self, args, state, control, train_dataloader, **kwargs):
+        if isinstance(train_dataloader.dataset, IterableDatasetShard):
+            pass  # set_epoch() is handled by the Trainer
+        elif isinstance(train_dataloader.dataset, IterableDataset):
+            train_dataloader.dataset.set_epoch(train_dataloader.dataset._epoch + 1)
