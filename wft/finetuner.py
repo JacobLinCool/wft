@@ -1,5 +1,6 @@
 import os
 import torch
+from time import time
 from typing import Any, Literal, Callable
 from datasets import DatasetDict
 from transformers import (
@@ -20,7 +21,12 @@ from evaluate import EvaluationModule
 from huggingface_hub import HfApi
 from .prepare_dataset import prepare_dataset
 from .utils import DataCollatorSpeechSeq2SeqWithPadding
-from .callbacks import WFTTensorBoardCallback, WFTProgressCallback, ShuffleCallback
+from .callbacks import (
+    WFTTensorBoardCallback,
+    WFTProgressCallback,
+    ShuffleCallback,
+    PushCallback,
+)
 
 
 class WhisperFineTuner:
@@ -117,9 +123,7 @@ class WhisperFineTuner:
         dtype = (
             torch.bfloat16
             if self.use_bf16
-            else torch.float16
-            if self.use_fp16
-            else torch.float32
+            else torch.float16 if self.use_fp16 else torch.float32
         )
         self.baseline_model = WhisperForConditionalGeneration.from_pretrained(
             baseline, load_in_8bit=False, torch_dtype=dtype
@@ -251,6 +255,7 @@ class WhisperFineTuner:
 
         if training_args is not None:
             self.training_args = training_args
+        self.training_args.num_train_epochs = 0
         print(f"Training arguments: {self.training_args}")
 
         data_collator = DataCollatorSpeechSeq2SeqWithPadding(self.processor)
@@ -265,25 +270,51 @@ class WhisperFineTuner:
             # replace -100 with the pad_token_id
             label_ids[label_ids == -100] = tokenizer.pad_token_id
 
-            # we do not want to group tokens when computing the metrics
+            decode_start = time()
             pred_str = tokenizer.batch_decode(pred_ids, skip_special_tokens=True)
             label_str = tokenizer.batch_decode(label_ids, skip_special_tokens=True)
+            decode_runtime = time() - decode_start
 
+            metric_primary_start = time()
             metric_primary_result = 100 * metric_primary.compute(
                 predictions=pred_str, references=label_str
             )
+            metric_primary_runtime = time() - metric_primary_start
+
+            metric_secondary_start = time()
             metric_secondary_result = 100 * metric_secondary.compute(
                 predictions=pred_str, references=label_str
             )
+            metric_secondary_runtime = time() - metric_secondary_start
 
-            markdown_table = "| i | Label | Prediction |\n| --- | --- | --- |\n"
+            mismatch_table = (
+                "## Incorrect Predictions\n\n"
+                "| i | Label | Prediction |\n| --- | --- | --- |\n"
+            )
+            match_table = (
+                "## Correct Predictions\n\n" "| i | Prediction |\n| --- | --- |\n"
+            )
+
             for i, (label, pred) in enumerate(zip(label_str, pred_str)):
-                markdown_table += f"| {i} | {label} | {pred} |\n"
+                if label != pred:
+                    mismatch_table += f"| {i} | {label} | {pred} |\n"
+                else:
+                    match_table += f"| {i} | {pred} |\n"
+
+            # Close details tags
+            mismatch_table += "\n"
+            match_table += "\n"
+
+            # Combine both tables
+            markdown_table = mismatch_table + "\n" + match_table
 
             return {
                 metric_primary.name: metric_primary_result,
                 metric_secondary.name: metric_secondary_result,
                 "pred": markdown_table,
+                "decode_runtime": decode_runtime,
+                f"{metric_primary.name}_runtime": metric_primary_runtime,
+                f"{metric_secondary.name}_runtime": metric_secondary_runtime,
             }
 
         def preprocess_logits_for_metrics(logits, labels):
@@ -293,6 +324,9 @@ class WhisperFineTuner:
 
         self.training_args.metric_for_best_model = self.metric_primary.name
         self.training_args.greater_is_better = False
+
+        self.lora_config.total_step = self.training_args.max_steps
+        self.lora_config.tinit = self.training_args.warmup_steps
 
         if resume:
             try:
@@ -333,17 +367,38 @@ class WhisperFineTuner:
         ):
             trainer.add_callback(WFTTensorBoardCallback())
         trainer.add_callback(ShuffleCallback())
+        trainer.add_callback(PushCallback(self))
 
         trainer.train(resume_from_checkpoint=resume)
         trainer.save_model(_internal_call=True)
 
-        if self.org is not None:
-            # temporarily remove large preds
-            preds = []
-            for log in trainer.state.log_history:
-                preds.append(log.pop("eval_pred", None))
+        self.push_to_hub()
 
-            trainer.push_to_hub(
+        return self
+
+    def push_to_hub(self):
+        if self.trainer is None:
+            raise ValueError("Please train the model first.")
+
+        if self.org is not None:
+            # temporarily remove large preds and runtime metrics
+            temp_storage = {
+                "preds": [],
+                "decode_runtime": [],
+                f"{self.metric_primary.name}_runtime": [],
+                f"{self.metric_secondary.name}_runtime": [],
+            }
+            for log in self.trainer.state.log_history:
+                temp_storage["preds"].append(log.pop("eval_pred", None))
+                temp_storage["decode_runtime"].append(log.pop("decode_runtime", None))
+                temp_storage[f"{self.metric_primary.name}_runtime"].append(
+                    log.pop(f"{self.metric_primary.name}_runtime", None)
+                )
+                temp_storage[f"{self.metric_secondary.name}_runtime"].append(
+                    log.pop(f"{self.metric_secondary.name}_runtime", None)
+                )
+
+            self.trainer.push_to_hub(
                 language=self.tokenizer.language,
                 finetuned_from=self.baseline,
                 tasks="automatic-speech-recognition",
@@ -357,11 +412,18 @@ class WhisperFineTuner:
                 ],
             )
 
-            # restore preds
-            for log, pred in zip(trainer.state.log_history, preds):
+            # restore preds and runtime metrics
+            for log, pred, decode_runtime, primary_runtime, secondary_runtime in zip(
+                self.trainer.state.log_history,
+                temp_storage["preds"],
+                temp_storage["decode_runtime"],
+                temp_storage[f"{self.metric_primary.name}_runtime"],
+                temp_storage[f"{self.metric_secondary.name}_runtime"],
+            ):
                 log["eval_pred"] = pred
-
-        return self
+                log["decode_runtime"] = decode_runtime
+                log[f"{self.metric_primary.name}_runtime"] = primary_runtime
+                log[f"{self.metric_secondary.name}_runtime"] = secondary_runtime
 
     def merge(
         self, dtype: torch.dtype | None = None
@@ -380,9 +442,7 @@ class WhisperFineTuner:
             dtype = (
                 torch.bfloat16
                 if self.use_bf16
-                else torch.float16
-                if self.use_fp16
-                else torch.float32
+                else torch.float16 if self.use_fp16 else torch.float32
             )
         return model.to(dtype=dtype)
 

@@ -1,8 +1,9 @@
 from transformers import TrainerCallback
 from transformers.integrations import TensorBoardCallback, rewrite_logs
 from transformers.integrations.integration_utils import logger
-from transformers.trainer_callback import ProgressCallback
+from transformers.trainer_callback import ProgressCallback, TrainerControl, TrainerState
 from transformers.trainer_pt_utils import IterableDatasetShard
+from transformers.training_args import TrainingArguments
 from torch.utils.data import IterableDataset
 
 
@@ -59,3 +60,20 @@ class ShuffleCallback(TrainerCallback):
             pass  # set_epoch() is handled by the Trainer
         elif isinstance(train_dataloader.dataset, IterableDataset):
             train_dataloader.dataset.set_epoch(train_dataloader.dataset._epoch + 1)
+
+
+class PushCallback(TrainerCallback):
+    def __init__(self, ft):
+        super().__init__()
+        self.ft = ft
+
+    def on_save(
+        self,
+        args: TrainingArguments,
+        state: TrainerState,
+        control: TrainerControl,
+        **kwargs,
+    ):
+        if state.is_world_process_zero and args.push_to_hub:
+            self.ft.push_to_hub()
+

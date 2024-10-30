@@ -1,4 +1,3 @@
-import os
 import shutil
 from wft import WhisperFineTuner
 
@@ -9,7 +8,6 @@ def test_whisper_finetuner():
 
     try:
         ft = WhisperFineTuner(id, org)
-        ft.training_args.num_train_epochs = 5
 
         shutil.rmtree(ft.dir, ignore_errors=True)
 
@@ -18,10 +16,11 @@ def test_whisper_finetuner():
             .prepare_dataset(
                 "hf-internal-testing/librispeech_asr_dummy",
                 src_transcription_column="text",
-                src_train_split="validation[:30]",
-                src_test_split="validation[30:60]",
+                src_train_split="validation",
+                src_test_split="validation[:10]",
             )
             .set_metric("wer")
+            .set_steps(100, 10, 10)
             .train()
             .merge_and_push()
         )
