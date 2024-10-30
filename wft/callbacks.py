@@ -76,4 +76,3 @@ class PushCallback(TrainerCallback):
     ):
         if state.is_world_process_zero and args.push_to_hub:
             self.ft.push_to_hub()
-

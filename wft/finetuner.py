@@ -1,5 +1,6 @@
 import os
 import torch
+import signal
 from time import time
 from typing import Any, Literal, Callable
 from datasets import DatasetDict
@@ -123,7 +124,9 @@ class WhisperFineTuner:
         dtype = (
             torch.bfloat16
             if self.use_bf16
-            else torch.float16 if self.use_fp16 else torch.float32
+            else torch.float16
+            if self.use_fp16
+            else torch.float32
         )
         self.baseline_model = WhisperForConditionalGeneration.from_pretrained(
             baseline, load_in_8bit=False, torch_dtype=dtype
@@ -369,6 +372,17 @@ class WhisperFineTuner:
         trainer.add_callback(ShuffleCallback())
         trainer.add_callback(PushCallback(self))
 
+        def signal_handler(sig, frame):
+            print("Training stopped by user.")
+            trainer.save_model()
+            print("Model saved locally.")
+            if self.org is not None:
+                self.push_to_hub()
+                print("Model pushed to the Hub.")
+            print("Bye!")
+            exit(0)
+
+        signal.signal(signal.SIGINT, signal_handler)
         trainer.train(resume_from_checkpoint=resume)
         trainer.save_model(_internal_call=True)
 
@@ -442,7 +456,9 @@ class WhisperFineTuner:
             dtype = (
                 torch.bfloat16
                 if self.use_bf16
-                else torch.float16 if self.use_fp16 else torch.float32
+                else torch.float16
+                if self.use_fp16
+                else torch.float32
             )
         return model.to(dtype=dtype)
 
