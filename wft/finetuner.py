@@ -136,6 +136,7 @@ class WhisperFineTuner:
         src_subset: str | None = None,
         src_train_split: str = "train+validation",
         src_test_split: str = "test",
+        buffer_size: int = 256,
     ):
         """
         Prepare the dataset for fine-tuning.
@@ -161,6 +162,7 @@ class WhisperFineTuner:
             src_subset=src_subset,
             src_train_split=src_train_split,
             src_test_split=src_test_split,
+            buffer_size=buffer_size,
         )
         self.original_dataset = src_name
         return self

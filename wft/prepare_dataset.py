@@ -1,4 +1,4 @@
-from datasets import IterableDatasetDict, Audio, load_dataset, interleave_datasets
+from datasets import IterableDataset, Dataset, Audio, load_dataset, interleave_datasets
 from transformers import WhisperFeatureExtractor, WhisperTokenizer
 
 
@@ -35,41 +35,41 @@ def prepare_dataset(
     src_subset: str | None = None,
     src_train_split: str = "train+validation",
     src_test_split: str = "test",
-) -> IterableDatasetDict:
-    ds = IterableDatasetDict()
-
-    ds["train"] = load_streaming_dataset(
+    buffer_size: int = 256,
+):
+    train = load_streaming_dataset(
         src_name,
         src_subset,
         split=src_train_split,
         trust_remote_code=True,
     )
-    ds["test"] = load_streaming_dataset(
+    test = load_dataset(
         src_name,
         src_subset,
         split=src_test_split,
         trust_remote_code=True,
     )
-    print("loaded source dataset", ds)
+    print("loaded source dataset", train, test)
 
     # remove all non-audio/transcription columns
-    ds["train"] = ds["train"].remove_columns(
+    train = train.remove_columns(
         [
             col
-            for col in ds["train"].column_names
+            for col in train.column_names
             if col not in [src_audio_column, src_transcription_column]
         ]
     )
-    ds["test"] = ds["test"].remove_columns(
+    test = test.remove_columns(
         [
             col
-            for col in ds["test"].column_names
+            for col in test.column_names
             if col not in [src_audio_column, src_transcription_column]
         ]
     )
 
     # resample the audio to 16kHz
-    ds = ds.cast_column(src_audio_column, Audio(sampling_rate=16000, mono=True))
+    train = train.cast_column(src_audio_column, Audio(sampling_rate=16000, mono=True))
+    test = test.cast_column(src_audio_column, Audio(sampling_rate=16000, mono=True))
 
     def prepare_dataset(batch):
         audio = batch[src_audio_column]
@@ -79,13 +79,15 @@ def prepare_dataset(
         batch["labels"] = tokenizer(batch[src_transcription_column]).input_ids
         return batch
 
-    ds = ds.map(
+    train = train.map(
         prepare_dataset,
-        remove_columns=list(next(iter(ds.values())).features),
+        remove_columns=list(train.features),
     )
+    test = test.map(prepare_dataset, remove_columns=test.column_names)
 
-    ds = ds.with_format("torch")
+    train = train.with_format("torch")
+    test = test.with_format("torch")
 
-    ds["train"] = ds["train"].shuffle(buffer_size=1024, seed=42)
+    train = train.shuffle(buffer_size=buffer_size, seed=42)
 
-    return ds
+    return {"train": train, "test": test}
