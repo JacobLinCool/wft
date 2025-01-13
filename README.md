@@ -45,6 +45,7 @@ ft = (
         src_audio_column="audio",
         src_transcription_column="sentence",
     )
+    .set_metric("wer")
     .train()  # Use default training arguments
 )
 ```
@@ -66,6 +67,7 @@ ft = (
         src_audio_column="audio",
         src_transcription_column="sentence",
     )
+    .set_metric("wer")
     .train()  # Use default training arguments
     .merge_and_push()  # Merge the model and push it to Hugging Face
 )
