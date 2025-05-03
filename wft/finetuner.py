@@ -114,19 +114,15 @@ class WhisperFineTuner:
             self: The WhisperFineTuner instance.
         """
         self.baseline = baseline
-        self.feature_extractor = WhisperFeatureExtractor.from_pretrained(baseline)
-        self.tokenizer = WhisperTokenizer.from_pretrained(
-            baseline, language=language, task=task
-        )
         self.processor = WhisperProcessor.from_pretrained(
             baseline, language=language, task=task
         )
+        self.feature_extractor = self.processor.feature_extractor
+        self.tokenizer = self.processor.tokenizer
         dtype = (
             torch.bfloat16
             if self.use_bf16
-            else torch.float16
-            if self.use_fp16
-            else torch.float32
+            else torch.float16 if self.use_fp16 else torch.float32
         )
         self.baseline_model = WhisperForConditionalGeneration.from_pretrained(
             baseline, load_in_8bit=False, torch_dtype=dtype
@@ -456,9 +452,7 @@ class WhisperFineTuner:
             dtype = (
                 torch.bfloat16
                 if self.use_bf16
-                else torch.float16
-                if self.use_fp16
-                else torch.float32
+                else torch.float16 if self.use_fp16 else torch.float32
             )
         return model.to(dtype=dtype)
 
